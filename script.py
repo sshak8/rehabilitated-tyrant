@@ -1,26 +1,48 @@
 import re
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 
 import feedparser
 import matplotlib.pyplot as plt
+import nltk
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 from textblob import TextBlob
 from wordcloud import WordCloud
 
+# Ensure NLTK data is downloaded quietly on startup
+for resource in ["punkt", "punkt_tab"]:
+    try:
+        nltk.data.find(f"tokenizers/{resource}")
+    except LookupError:
+        nltk.download(resource, quiet=True)
+
 
 def remove_html_tags(text):
     return re.sub(r"<[^>]+>", "", text)
 
 
+@st.cache_data(ttl=600)
 def fetch_news(topic, max_articles=100):
     encoded_topic = quote(topic)
     url = f"https://news.google.com/rss/search?q={encoded_topic}"
-    feed = feedparser.parse(url)
-    articles = []
 
+    # Custom User-Agent prevents Google RSS from blocking feedparser
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    )
+
+    try:
+        with urllib.request.urlopen(req) as response:
+            xml_data = response.read()
+            feed = feedparser.parse(xml_data)
+    except Exception as e:
+        st.error(f"Error fetching news feed: {e}")
+        return []
+
+    articles = []
     for entry in feed.entries[:max_articles]:
         title = entry.title if "title" in entry else ""
         summary = remove_html_tags(entry.summary) if "summary" in entry else ""
@@ -122,8 +144,6 @@ def main():
     if "sentiment_df" not in st.session_state:
         st.session_state.sentiment_df = None
 
-    articles = []
-
     with st.sidebar:
         st.title("Settings")
         topic = st.text_input("Search Topic:", value="technology")
@@ -147,7 +167,7 @@ def main():
                     st.warning("No articles found for this topic.")
 
     # Display Dashboard Results
-    if st.session_state.sentiment_df is not None:
+    if st.session_state.sentiment_df is not None and not st.session_state.sentiment_df.empty:
         df = st.session_state.sentiment_df
 
         col1, col2 = st.columns(2)
@@ -164,6 +184,8 @@ def main():
 
         st.subheader("Raw Data")
         st.dataframe(df)
+    else:
+        st.info("Enter a topic in the sidebar and click **Analyze news for me** to start.")
 
 
 if __name__ == "__main__":
